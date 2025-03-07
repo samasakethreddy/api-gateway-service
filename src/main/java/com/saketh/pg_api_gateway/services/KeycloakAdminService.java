@@ -1,5 +1,9 @@
 package com.saketh.pg_api_gateway.services;
 
+import com.saketh.pg_api_gateway.entity.Role;
+import com.saketh.pg_api_gateway.entity.User;
+import com.saketh.pg_api_gateway.repository.RoleRepository;
+import com.saketh.pg_api_gateway.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -12,14 +16,20 @@ import org.springframework.web.client.RestTemplate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.json.JSONArray;
-import org.json.JSONObject;
 
 @Service
 public class KeycloakAdminService {
 
     @Autowired
     private RestTemplate restTemplate;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private RoleRepository roleRepository;
 
     @Value("${keycloak.server-url}")
     private String KEYCLOAK_SERVER_URL;
@@ -32,6 +42,7 @@ public class KeycloakAdminService {
 
     @Value("${keycloak.client-secret}")
     private String CLIENT_SECRET;
+
 
     /**
      * Obtain admin access token for administrative operations
@@ -115,6 +126,16 @@ public class KeycloakAdminService {
             );
 
             if (response.getStatusCode().is2xxSuccessful()) {
+                // Retrieve the user ID from Keycloak
+                String userId = getKeycloakUserId(email, adminToken);
+
+                if (userId == null) {
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to retrieve Keycloak user ID.");
+                }
+
+                // Save user details in the database
+                saveUserToDatabase(userId, username, email, firstName, lastName, role);
+
                 return ResponseEntity.ok("User created successfully.");
             }
 
@@ -194,6 +215,44 @@ public class KeycloakAdminService {
                     .status(e.getStatusCode())
                     .body("Logout failed: " + e.getResponseBodyAsString());
         }
+    }
+
+
+    private String getKeycloakUserId(String email, String adminToken) {
+        String getUsersUrl = KEYCLOAK_SERVER_URL + "/admin/realms/" + REALM + "/users?email=" + email;
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(adminToken);
+        HttpEntity<Void> request = new HttpEntity<>(headers);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                getUsersUrl, HttpMethod.GET, request, String.class
+        );
+
+        if (response.getStatusCode().is2xxSuccessful()) {
+            JSONArray usersArray = new JSONArray(response.getBody());
+            if (usersArray.length() > 0) {
+                return usersArray.getJSONObject(0).getString("id"); // Extract Keycloak user ID
+            }
+        }
+
+        return null; // User not found
+    }
+
+
+
+    private void saveUserToDatabase(String keycloakId, String username, String email, String firstName, String lastName, String roleName) {
+        User user = new User();
+        user.setKeycloakId(keycloakId);  // Save Keycloak ID
+        user.setEmail(email);
+
+        // Assign role
+        Role role = roleRepository.findByName(roleName)
+                .orElseThrow(() -> new RuntimeException("Role not found: " + roleName));
+
+        user.setRoles(Set.of(role));
+
+        userRepository.save(user);
     }
 
 

@@ -5,39 +5,33 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
-import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.stream.Collectors;
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
-    // Configurable free access URLs
-    private final String[] PUBLIC_URLS = {
+    // Publicly accessible endpoints (No authentication required)
+    private static final String[] PUBLIC_URLS = {
             "/api/users/login",
-            "/api/users/login/**",
+            "/api/users/register",
             "/logout",
-            "/logout/**",
-            "/api/users/register"
+            "/api/docs/**",   // Swagger docs (optional)
+            "/api/public/**"  // Public API endpoints (optional)
     };
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity) throws Exception {
         return httpSecurity
-                // Disable CSRF protection for stateless REST API
-                .csrf(csrf -> csrf.disable())
+                .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for REST APIs
 
-                // Configure session management as stateless
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
@@ -51,70 +45,45 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
 
-                // Enable CORS
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Enable CORS
 
-                // Configure OAuth2 Resource Server with JWT
-                .oauth2ResourceServer(oauth2 ->
-                        oauth2.jwt(Customizer.withDefaults())
-                )
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults())) // Enable JWT-based OAuth2
 
                 .build();
     }
 
-
     @Bean
-    public JwtAuthenticationConverter jwtAuthenticationConverter() {
-        JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter = new JwtGrantedAuthoritiesConverter();
-        jwtGrantedAuthoritiesConverter.setAuthorityPrefix("ROLE_");
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration corsConfig = new CorsConfiguration();
 
-        JwtAuthenticationConverter jwtAuthenticationConverter = new JwtAuthenticationConverter();
-        jwtAuthenticationConverter.setJwtGrantedAuthoritiesConverter(jwt -> {
-            Collection<String> roles = (Collection<String>) jwt.getClaimAsMap("realm_access").get("roles");
-            return  roles.stream()
-                    .map(role -> new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()))
-                    .collect(Collectors.toList());
-        });
-        return jwtAuthenticationConverter;
-    }
-
-    @Bean
-    CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration corsConfiguration = new CorsConfiguration();
-
-        // Allowed origins (replace with your specific origins in production)
-        corsConfiguration.setAllowedOrigins(Arrays.asList(
-                "http://localhost:3000",  // React frontend
-                "http://localhost:4200",  // Angular frontend
-                "https://your-production-domain.com",
+        // Specify allowed origins (restrict in production)
+        corsConfig.setAllowedOrigins(List.of(
+                "http://localhost:3000", // React frontend
+                "http://localhost:4200", // Angular frontend
+                "https://your-production-domain.com", // Production domain
                 "*"
         ));
 
         // Allowed HTTP methods
-        corsConfiguration.setAllowedMethods(Arrays.asList(
-                "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"
-        ));
+        corsConfig.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
 
         // Allowed headers
-        corsConfiguration.setAllowedHeaders(Arrays.asList(
+        corsConfig.setAllowedHeaders(List.of(
                 "Authorization",
                 "Content-Type",
                 "X-Requested-With",
                 "Accept",
-                "Origin"
+                "Origin",
+                "X-User-Roles"
         ));
 
-        // Enable credentials
-        corsConfiguration.setAllowCredentials(true);
+        corsConfig.setAllowCredentials(true); // Allow sending cookies & credentials
+        corsConfig.setMaxAge(3600L); // Cache CORS preflight requests for 1 hour
 
-        // Max age for CORS preflight request
-        corsConfiguration.setMaxAge(3600L);
-
-        // Create CORS configuration source
+        // Apply configuration to all paths
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", corsConfiguration);
+        source.registerCorsConfiguration("/**", corsConfig);
 
         return source;
     }
-
 }
