@@ -1,5 +1,8 @@
 package com.saketh.pg_api_gateway.config;
 
+import com.saketh.pg_api_gateway.repository.UserRepository;
+import com.saketh.pg_api_gateway.services.CustomUserDetailsService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -7,7 +10,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -18,6 +23,9 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    @Autowired
+    private CustomUserDetailsService userDetailsService;
+
     // Publicly accessible endpoints (No authentication required)
     private static final String[] PUBLIC_URLS = {
             "/api/users/login",
@@ -27,30 +35,28 @@ public class SecurityConfig {
             "/api/public/**"  // Public API endpoints (optional)
     };
 
+
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity, UserRepository userRepository) throws Exception {
         return httpSecurity
-                .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for REST APIs
-
-                .sessionManagement(session ->
-                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-                )
-
-                // Configure authorization rules
-                .authorizeHttpRequests(authorize -> authorize
-                        // Permit access to public URLs
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_URLS).permitAll()
-
-                        // Require authentication for all other requests
                         .anyRequest().authenticated()
                 )
-
-                .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Enable CORS
-
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults())) // Enable JWT-based OAuth2
-
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(Customizer.withDefaults())
+                )
+                // Add custom authorization filter after OAuth2 JWT token filter (BearerTokenAuthenticationFilter)
+                .addFilterAfter(
+                        new JwtUserAuthorizationFilter(userRepository),
+                        BearerTokenAuthenticationFilter.class
+                )
                 .build();
     }
+
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {

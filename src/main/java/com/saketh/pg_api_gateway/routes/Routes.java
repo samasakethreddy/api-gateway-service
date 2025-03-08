@@ -7,11 +7,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.function.*;
 
 import java.net.URI;
+import java.util.stream.Collectors;
 
 import static org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions.route;
 
@@ -33,11 +36,18 @@ public class Routes {
         return "Hello World!";
     }
 
+
     private static HandlerFunction<ServerResponse> forwardWithHeaders(String targetUrl) {
         return request -> {
             // Extract Authorization header
             String authHeader = request.headers().firstHeader(HttpHeaders.AUTHORIZATION);
-            String userRoles = request.headers().firstHeader("roles");  // Extract roles if available
+
+            // Extract roles from Spring Security
+            String userRoles = SecurityContextHolder.getContext().getAuthentication() != null
+                    ? SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
+                    .map(GrantedAuthority::getAuthority)
+                    .collect(Collectors.joining(","))
+                    : null;
 
             // Create a new request builder and add headers conditionally
             ServerRequest.Builder newRequest = ServerRequest.from(request);
@@ -46,13 +56,14 @@ public class Routes {
                 newRequest.header(HttpHeaders.AUTHORIZATION, authHeader);
             }
             if (userRoles != null) {
-                newRequest.header("roles", userRoles);
+                newRequest.header("X-User-Roles", userRoles);  // Set roles in header
             }
 
             // Forward request to the target URL with modified headers
             return HandlerFunctions.http(targetUrl).handle(newRequest.build());
         };
     }
+
 
 
     @Bean
