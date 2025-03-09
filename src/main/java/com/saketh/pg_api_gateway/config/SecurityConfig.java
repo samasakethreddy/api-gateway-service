@@ -12,7 +12,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.context.annotation.RequestScope;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -37,7 +37,7 @@ public class SecurityConfig {
 
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity, UserRepository userRepository) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity, UserRepository userRepository, AuthHolder authHolder) throws Exception {
         return httpSecurity
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -51,7 +51,7 @@ public class SecurityConfig {
                 )
                 // Add custom authorization filter after OAuth2 JWT token filter (BearerTokenAuthenticationFilter)
                 .addFilterAfter(
-                        new JwtUserAuthorizationFilter(userRepository),
+                        new JwtUserAuthorizationFilter(userRepository, authHolder),
                         BearerTokenAuthenticationFilter.class
                 )
                 .build();
@@ -67,7 +67,7 @@ public class SecurityConfig {
                 "http://localhost:3000", // React frontend
                 "http://localhost:4200", // Angular frontend
                 "https://your-production-domain.com", // Production domain
-                "*"
+                "https://web.postman.co/*"
         ));
 
         // Allowed HTTP methods
@@ -92,4 +92,10 @@ public class SecurityConfig {
 
         return source;
     }
+
+    @Bean
+    public AuthHolder authHolder() {
+        return new AuthHolder();
+    }
+
 }

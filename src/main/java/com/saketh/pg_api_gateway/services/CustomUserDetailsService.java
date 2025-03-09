@@ -2,7 +2,6 @@ package com.saketh.pg_api_gateway.services;
 
 import com.saketh.pg_api_gateway.entity.User;
 import com.saketh.pg_api_gateway.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;

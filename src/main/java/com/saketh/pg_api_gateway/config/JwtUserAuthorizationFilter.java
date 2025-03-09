@@ -28,8 +28,11 @@ public class JwtUserAuthorizationFilter extends OncePerRequestFilter {
 
     private final UserRepository userRepository;
 
-    public JwtUserAuthorizationFilter(UserRepository userRepository) {
+    private final AuthHolder authHolder;
+
+    public JwtUserAuthorizationFilter(UserRepository userRepository, AuthHolder authHolder) {
         this.userRepository = userRepository;
+        this.authHolder = authHolder;
     }
 
     @Override
@@ -89,7 +92,11 @@ public class JwtUserAuthorizationFilter extends OncePerRequestFilter {
 
             // Set authentication in SecurityContext
             SecurityContextHolder.getContext().setAuthentication(newToken);
-            logger.info("User {} authorized with combined roles: {}", email, authorities);
+
+            authHolder.setAuthentication(authentication);
+
+            logger.info("User {} authorized with combined roles: {} : {}", email, authorities, authHolder);
+
         } catch (Exception e) {
             logger.error("Error processing JWT authentication", e);
         }
