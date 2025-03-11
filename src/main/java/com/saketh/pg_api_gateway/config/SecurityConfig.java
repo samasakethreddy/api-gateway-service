@@ -1,8 +1,6 @@
 package com.saketh.pg_api_gateway.config;
 
 import com.saketh.pg_api_gateway.repository.UserRepository;
-import com.saketh.pg_api_gateway.services.CustomUserDetailsService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -22,9 +20,6 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
-
-    @Autowired
-    private CustomUserDetailsService userDetailsService;
 
     // Publicly accessible endpoints (No authentication required)
     private static final String[] PUBLIC_URLS = {

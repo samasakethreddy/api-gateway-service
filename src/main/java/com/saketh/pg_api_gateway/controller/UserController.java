@@ -1,7 +1,9 @@
 package com.saketh.pg_api_gateway.controller;
 
 import com.saketh.pg_api_gateway.services.KeycloakAdminService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,23 +21,18 @@ public class UserController {
         this.keycloakAdminService = keycloakUserService;
     }
 
-    @PostMapping("/register")
-    public ResponseEntity<String> registerUser(@RequestBody Map<String, String> userDetails) {
-        String username = userDetails.get("email");
-        String email = userDetails.get("email");
-        String password = userDetails.get("password");
-        String firstName = userDetails.get("firstName");
-        String lastName = userDetails.get("lastName");
-        String role = userDetails.get("role");
-
-        // Basic input validation
-        if (username == null || role == null || email == null || password == null || firstName == null || lastName == null) {
-            return ResponseEntity.badRequest().body("Missing required fields");
-        }
-
-        return keycloakAdminService.createUser(username, email, password, firstName, lastName, role);
+    @PostMapping("/register/owner")
+    public ResponseEntity<String> registerOwner(@RequestBody Map<String, String> userDetails, HttpServletRequest request) {
+        userDetails.put("role", "OWNER"); // Ensure role is set
+        return keycloakAdminService.createOwner(userDetails, request);
     }
 
+    @PostMapping("/register/tenant")
+    @PreAuthorize("hasRole('OWNER')")
+    public ResponseEntity<String> registerTenant(@RequestBody Map<String, String> userDetails, HttpServletRequest request) {
+        userDetails.put("role", "TENANT"); // Ensure role is set
+        return keycloakAdminService.createTenant(userDetails, request);
+    }
 
 
     @PostMapping("/login")

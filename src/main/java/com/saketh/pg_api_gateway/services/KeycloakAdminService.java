@@ -1,23 +1,30 @@
 package com.saketh.pg_api_gateway.services;
 
+import com.saketh.pg_api_gateway.entity.Owner;
 import com.saketh.pg_api_gateway.entity.Role;
+import com.saketh.pg_api_gateway.entity.Tenant;
 import com.saketh.pg_api_gateway.entity.User;
+import com.saketh.pg_api_gateway.repository.OwnerRepository;
 import com.saketh.pg_api_gateway.repository.RoleRepository;
 import com.saketh.pg_api_gateway.repository.UserRepository;
+import jakarta.servlet.http.HttpServletRequest;
+import org.json.JSONArray;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.json.JSONArray;
 
 @Service
 public class KeycloakAdminService {
@@ -29,7 +36,13 @@ public class KeycloakAdminService {
     private UserRepository userRepository;
 
     @Autowired
+    private OwnerRepository ownerRepository;
+
+    @Autowired
     private RoleRepository roleRepository;
+
+    @Value("${tenantService.service.url}")
+    private String tenantServiceUrl;
 
     @Value("${keycloak.server-url}")
     private String KEYCLOAK_SERVER_URL;
@@ -46,6 +59,7 @@ public class KeycloakAdminService {
 
     /**
      * Obtain admin access token for administrative operations
+     *
      * @return Access token string
      */
     private String getAdminAccessToken() {
@@ -76,80 +90,198 @@ public class KeycloakAdminService {
     }
 
     /**
-     * Create a new user in Keycloak
+     * Creates a new tenant in the system.
+     * 1. Retrieves the owner's details from the JWT token.
+     * 2. Validates user input.
+     * 3. Sends tenant data to the tenant service.
+     * 4. Calls `createUser` to register the tenant in Keycloak.
      *
-     * @param username  User's username
-     * @param email     User's email
-     * @param password  User's password
-     * @param firstName
-     * @param lastName
-     * @param role
-     * @return Created user details
+     * @param userDetails User-provided tenant details.
+     * @param request     HTTP request containing the Authorization header.
+     * @return ResponseEntity<String> indicating success or failure.
      */
-    public ResponseEntity<String> createUser(
-            String username, String email, String password,
-            String firstName, String lastName, String role
-    ) {
-        String adminToken = getAdminAccessToken();
-        String createUserUrl = KEYCLOAK_SERVER_URL + "/admin/realms/" + REALM + "/users";
-
+    public ResponseEntity<String> createTenant(Map<String, String> userDetails, HttpServletRequest request) {
         try {
-            // Prepare user creation payload
-            Map<String, Object> userRepresentation = new HashMap<>();
-            userRepresentation.put("username", username);
-            userRepresentation.put("email", email);
-            userRepresentation.put("enabled", true);
-            userRepresentation.put("firstName", firstName);
-            userRepresentation.put("lastName", lastName);
+            // Extract JWT authentication and fetch owner email
+            Jwt jwt = (Jwt) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+            String ownerEmail = jwt.getClaimAsString("email");
 
-            // Prepare user credentials
-            Map<String, Object> credentialRepresentation = new HashMap<>();
-            credentialRepresentation.put("type", "password");
-            credentialRepresentation.put("value", password);
-            credentialRepresentation.put("temporary", false);
+            // Retrieve owner from the database
+            Owner owner = ownerRepository.findByEmail(ownerEmail)
+                    .orElseThrow(() -> new RuntimeException("Owner not found with email: " + ownerEmail));
 
-            userRepresentation.put("credentials", List.of(credentialRepresentation));
+            // Validate required fields in userDetails
+            if (!validateTenantFields(userDetails)) {
+                return ResponseEntity.badRequest().body("Missing or invalid tenant details.");
+            }
 
-            // Prepare HTTP request
+            // Extract Authorization token
+            String authToken = request.getHeader("Authorization");
+            if (authToken == null || authToken.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Authorization header is required.");
+            }
+
+            // Map user details to Tenant DTO
+            Tenant tenant = Tenant.builder()
+                    .ownerId(owner.getEmail()) // Owner email is used as ownerId
+                    .tenantName(userDetails.get("firstName") + " " + userDetails.get("lastName"))
+                    .tenantAge(Integer.parseInt(userDetails.get("age")))
+                    .roomId(Integer.parseInt(userDetails.get("roomId")))
+                    .aadharId(userDetails.get("aadharId"))
+                    .email(userDetails.get("email"))
+                    .phoneNumber(userDetails.get("phoneNumber"))
+                    .joinDate(LocalDate.parse(userDetails.get("joinDate"))) // Parse date
+                    .build();
+
+            // Send tenant data to tenant service
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(authToken);
+
+            HttpEntity<Tenant> tenantRequestEntity = new HttpEntity<>(tenant, headers);
+            ResponseEntity<String> tenantResponse = restTemplate.exchange(
+                    tenantServiceUrl + "/api/tenants",
+                    HttpMethod.POST,
+                    tenantRequestEntity,
+                    String.class
+            );
+
+            if (!tenantResponse.getStatusCode().is2xxSuccessful()) {
+                return ResponseEntity.status(tenantResponse.getStatusCode()).body("Tenant creation failed.");
+            }
+
+            // Register user in Keycloak
+            return createUser(userDetails, request);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error creating tenant: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Creates an owner account.
+     * 1. Validates input.
+     * 2. Saves owner details to the database.
+     * 3. Calls `createUser` to register the owner in Keycloak.
+     *
+     * @param userDetails User-provided owner details.
+     * @param request     HTTP request.
+     * @return ResponseEntity<String> indicating success or failure.
+     */
+    public ResponseEntity<String> createOwner(Map<String, String> userDetails, HttpServletRequest request) {
+        try {
+            if (!validateOwnerFields(userDetails)) {
+                return ResponseEntity.badRequest().body("Missing required owner details.");
+            }
+
+            // Extract user details
+            String email = userDetails.get("email");
+
+            // Save owner details in the database
+            Owner owner = Owner.builder()
+                    .name(email)
+                    .email(email)
+                    .build();
+
+            ownerRepository.save(owner);
+
+            // Register owner in Keycloak
+            return createUser(userDetails, request);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error creating owner: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Creates a user in Keycloak.
+     * 1. Validates input fields.
+     * 2. Sends a request to Keycloak's user management API.
+     * 3. Stores user data in the local database.
+     *
+     * @param userDetails User-provided details.
+     * @param request     HTTP request.
+     * @return ResponseEntity<String> indicating success or failure.
+     */
+    public ResponseEntity<String> createUser(Map<String, String> userDetails, HttpServletRequest request) {
+        try {
+            String adminToken = getAdminAccessToken();
+
+            if (!validateUserFields(userDetails)) {
+                return ResponseEntity.badRequest().body("Missing required user details.");
+            }
+
+            // Prepare user creation payload for Keycloak
+            Map<String, Object> userRepresentation = Map.of(
+                    "username", userDetails.get("email"),
+                    "email", userDetails.get("email"),
+                    "enabled", true,
+                    "firstName", userDetails.get("firstName"),
+                    "lastName", userDetails.get("lastName"),
+                    "credentials", List.of(Map.of(
+                            "type", "password",
+                            "value", userDetails.get("password"),
+                            "temporary", false
+                    ))
+            );
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(adminToken);
 
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(userRepresentation, headers);
-
-            // Send user creation request
+            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(userRepresentation, headers);
             ResponseEntity<String> response = restTemplate.exchange(
-                    createUserUrl,
+                    KEYCLOAK_SERVER_URL + "/admin/realms/" + REALM + "/users",
                     HttpMethod.POST,
-                    request,
+                    requestEntity,
                     String.class
             );
 
             if (response.getStatusCode().is2xxSuccessful()) {
-                // Retrieve the user ID from Keycloak
-                String userId = getKeycloakUserId(email, adminToken);
+                String userId = getKeycloakUserId(userDetails.get("email"), adminToken);
 
                 if (userId == null) {
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to retrieve Keycloak user ID.");
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                            .body("Failed to retrieve Keycloak user ID.");
                 }
 
-                // Save user details in the database
-                saveUserToDatabase(userId, username, email, firstName, lastName, role);
-
+                saveUserToDatabase(userId, userDetails.get("email"), userDetails.get("email"),
+                        userDetails.get("firstName"), userDetails.get("lastName"),
+                        userDetails.get("role"));
                 return ResponseEntity.ok("User created successfully.");
             }
 
             return ResponseEntity.status(response.getStatusCode()).body("User creation failed.");
         } catch (HttpClientErrorException e) {
-            return ResponseEntity
-                    .status(e.getStatusCode())
+            return ResponseEntity.status(e.getStatusCode())
                     .body("User creation failed: " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("An unexpected error occurred: " + e.getMessage());
         }
     }
 
+    // Helper functions for input validation
+    private boolean validateUserFields(Map<String, String> userDetails) {
+        return userDetails.containsKey("email") && userDetails.containsKey("password") &&
+                userDetails.containsKey("firstName") && userDetails.containsKey("lastName") &&
+                userDetails.containsKey("role");
+    }
+
+    private boolean validateTenantFields(Map<String, String> userDetails) {
+        return userDetails.containsKey("firstName") && userDetails.containsKey("lastName") &&
+                userDetails.containsKey("age") && userDetails.containsKey("roomId") &&
+                userDetails.containsKey("aadharId") && userDetails.containsKey("email") &&
+                userDetails.containsKey("phoneNumber") && userDetails.containsKey("joinDate");
+    }
+
+    private boolean validateOwnerFields(Map<String, String> userDetails) {
+        return userDetails.containsKey("email");
+    }
 
     /**
      * Authenticate user and obtain access token
+     *
      * @param username User's username
      * @param password User's password
      * @return Authentication response with tokens
@@ -240,7 +372,6 @@ public class KeycloakAdminService {
     }
 
 
-
     private void saveUserToDatabase(String keycloakId, String username, String email, String firstName, String lastName, String roleName) {
         User user = new User();
         user.setKeycloakId(keycloakId);  // Save Keycloak ID
@@ -256,10 +387,9 @@ public class KeycloakAdminService {
     }
 
 
-
-
     /**
      * Validate user token
+     *
      * @param token Access token to validate
      * @return Token validation result
      */
