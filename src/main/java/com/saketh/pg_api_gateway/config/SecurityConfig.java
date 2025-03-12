@@ -24,7 +24,7 @@ public class SecurityConfig {
     // Publicly accessible endpoints (No authentication required)
     private static final String[] PUBLIC_URLS = {
             "/api/users/login",
-            "/api/users/register",
+            "/api/users/register/owner",
             "/logout",
             "/api/docs/**",   // Swagger docs (optional)
             "/api/public/**"  // Public API endpoints (optional)

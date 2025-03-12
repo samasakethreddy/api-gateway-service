@@ -9,15 +9,20 @@ import com.saketh.pg_api_gateway.repository.RoleRepository;
 import com.saketh.pg_api_gateway.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.json.JSONArray;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
@@ -25,12 +30,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class KeycloakAdminService {
 
+    private static final Logger logger = LoggerFactory.getLogger(KeycloakAdminService.class);
+
     @Autowired
     private RestTemplate restTemplate;
+
+    @Autowired
+    private RestClient restClient;
 
     @Autowired
     private UserRepository userRepository;
@@ -115,6 +126,16 @@ public class KeycloakAdminService {
                 return ResponseEntity.badRequest().body("Missing or invalid tenant details.");
             }
 
+            // Extract Authentication object
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+            // Extract user roles
+            String userRoles = (authentication != null)
+                    ? authentication.getAuthorities().stream()
+                    .map(GrantedAuthority::getAuthority)
+                    .collect(Collectors.joining(","))
+                    : null;
+
             // Extract Authorization token
             String authToken = request.getHeader("Authorization");
             if (authToken == null || authToken.isEmpty()) {
@@ -133,30 +154,74 @@ public class KeycloakAdminService {
                     .joinDate(LocalDate.parse(userDetails.get("joinDate"))) // Parse date
                     .build();
 
-            // Send tenant data to tenant service
+            // Log Tenant Data (For Debugging)
+            logger.info("Sending Tenant Data: {}", tenant);
+
+            // Send tenant data to tenant service in request body
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(authToken);
 
-            HttpEntity<Tenant> tenantRequestEntity = new HttpEntity<>(tenant, headers);
-            ResponseEntity<String> tenantResponse = restTemplate.exchange(
-                    tenantServiceUrl + "/api/tenants",
-                    HttpMethod.POST,
-                    tenantRequestEntity,
-                    String.class
-            );
+            if (userRoles != null) {
+                headers.add("X-User-Roles", userRoles); // Send user roles to tenant service
+                logger.info("Roles Added");
+            }
 
+            // Create HTTP Entity with Tenant as Body
+            HttpEntity<Tenant> tenantRequestEntity = new HttpEntity<>(tenant, headers);
+
+            logger.info("tenantRequestEntity created");
+
+//            // Make API Call to Tenant Service
+//            ResponseEntity<String> tenantResponse = restTemplate.exchange(
+//                    tenantServiceUrl + "/api/tenants",
+//                    HttpMethod.POST,
+//                    tenantRequestEntity,
+//                    String.class
+//            );
+//
+//            logger.info("Tenant Service called");
+//
+////             Check if tenant creation was successful
+//            if (!tenantResponse.getStatusCode().is2xxSuccessful()) {
+//                logger.error("Tenant Service Response: {}", tenantResponse.getBody());
+//                return ResponseEntity.status(tenantResponse.getStatusCode()).body("Tenant creation failed.");
+//            }
+//
+//            // Log Success
+//            logger.info("Tenant successfully created in Tenant Service.");
+//
+//            // Register user in Keycloak
+//            return createUser(userDetails, request);
+
+
+            // Send tenant data to tenant service using RestClient
+            ResponseEntity<String> tenantResponse = restClient.post()
+                    .uri(tenantServiceUrl + "/api/tenants")
+                    .header(HttpHeaders.AUTHORIZATION, authToken)
+                    .body(tenant)
+                    .retrieve()
+                    .toEntity(String.class);
+
+            // Check if tenant creation was successful
             if (!tenantResponse.getStatusCode().is2xxSuccessful()) {
+                logger.error("Tenant Service Response: {}", tenantResponse.getBody());
                 return ResponseEntity.status(tenantResponse.getStatusCode()).body("Tenant creation failed.");
             }
 
+            // Log success
+            logger.info("Tenant successfully created in Tenant Service.");
+
             // Register user in Keycloak
             return createUser(userDetails, request);
+
         } catch (Exception e) {
+            logger.error("Error creating tenant: {}", e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Error creating tenant: " + e.getMessage());
+                    .body("Error creating tenant: " + e);
         }
     }
+
 
     /**
      * Creates an owner account.
