@@ -3,7 +3,6 @@ package com.saketh.pg_api_gateway.routes;
 import com.saketh.pg_api_gateway.config.AuthHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.server.mvc.filter.CircuitBreakerFilterFunctions;
 import org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions;
@@ -79,6 +78,7 @@ public class Routes {
 
             // Create a new request builder and add headers conditionally
             ServerRequest.Builder newRequest = ServerRequest.from(request);
+
             if (authHeader != null) {
                 newRequest.header(HttpHeaders.AUTHORIZATION, authHeader);
             }
